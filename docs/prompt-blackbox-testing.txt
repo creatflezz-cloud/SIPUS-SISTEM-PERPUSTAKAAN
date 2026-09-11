@@ -1,0 +1,134 @@
+# PROMPT BLACKBOX TESTING — SIPUS (Sistem Informasi Perpustakaan)
+# Cara pakai: salin seluruh teks di bawah "---SALIN DARI SINI---" sampai "---SALIN SAMPAI SINI---",
+# tempel di Claude, lalu lampirkan file ketentuan pengujian Anda.
+
+---SALIN DARI SINI---
+
+Anda adalah seorang Senior QA Engineer / Software Tester yang ahli dalam blackbox testing. Tugas Anda adalah membuat **tabel test case blackbox testing yang lengkap** untuk aplikasi web berikut.
+
+## KONTEKS SISTEM
+
+Nama aplikasi: **SIPUS (Sistem Informasi Perpustakaan)**
+- Teknologi: Laravel (PHP) web application, database MySQL
+- Pengguna: Petugas perpustakaan (login area) dan publik (katalog)
+- URL: http://127.0.0.1:8000
+- Semua halaman admin (dashboard, anggota, kategori, buku, peminjaman, pengembalian, transaksi, laporan, profil) WAJIB login terlebih dahulu. Halaman login dan katalog dapat diakses tanpa login.
+- Middleware autentikasi: `guest` hanya untuk halaman login; semua rute kecuali login & katalog memakai middleware `auth`.
+
+## MODUL DAN ATURAN VALIDASI (referensi teknis akurat dari kode sumber)
+
+### 1. Modul Autentikasi (Login / Logout)
+- Route: GET/POST `login`, POST `logout`
+- Aturan validasi login: `email` wajib & format email valid; `password` wajib.
+- Pesan error: "Email wajib diisi.", "Format email tidak valid.", "Password wajib diisi."
+- Jika email/password salah: kembali ke halaman login dengan error "Email atau password salah."
+- Logout: invalidate session, regenerate token, redirect ke login dengan pesan "Logout berhasil."
+
+### 2. Modul Dashboard
+- Menampilkan ringkasan statistik setelah login.
+- Hanya bisa diakses jika sudah login.
+
+### 3. Modul Manajemen Anggota (CRUD + Search + Filter)
+Field: `member_code`, `name`, `gender`, `phone`, `address`, `status`
+- `member_code`: wajib, string maks 20, UNIK (tidak boleh duplikat). Error: "Nomor anggota wajib diisi.", "Nomor anggota sudah digunakan."
+- `name`: wajib, string maks 255. Error: "Nama wajib diisi."
+- `gender`: wajib, hanya boleh nilai `L` atau `P`.
+- `phone`: opsional, string maks 20.
+- `address`: opsional, string bebas.
+- `status`: wajib, hanya boleh nilai `aktif` atau `tidak_aktif`.
+- Fitur index: pencarian (nama/kode/telepon), filter status aktif/tidak_aktif, pagination 10 baris.
+- Hapus anggota: langsung hapus tanpa kondisi khusus.
+
+### 4. Modul Manajemen Kategori (CRUD + Search)
+Field: `name`, `description`
+- `name`: wajib, string maks 100, UNIK. Error: "Nama kategori wajib diisi.", "Nama kategori sudah digunakan."
+- `description`: opsional.
+- Fitur index: pencarian nama, menampilkan jumlah buku per kategori, pagination 10 baris.
+- HAPUS kategori DITOLAK jika kategori masih memiliki buku -> redirect balik dengan error "Kategori tidak dapat dihapus karena masih memiliki buku."
+
+### 5. Modul Manajemen Buku (CRUD + Search + Filter + Upload Foto)
+Field: `isbn`, `title`, `author`, `publisher`, `publication_year`, `category_id`, `stock`, `rack_location`, `description`, `photo`
+- `isbn`: opsional, string maks 20, UNIK. Error: "ISBN sudah digunakan."
+- `title`: wajib, maks 255. Error: "Judul wajib diisi."
+- `author`: wajib, maks 255. Error: "Penulis wajib diisi."
+- `publisher`: opsional, maks 255.
+- `publication_year`: opsional, integer, minimal 1900, maksimal tahun berjalan (now).
+- `category_id`: wajib, harus mengacu pada id kategori yang ada. Error: "Kategori wajib dipilih."
+- `stock`: wajib, integer, minimal 0. Error: "Stok tidak boleh negatif."
+- `rack_location`: opsional, maks 100.
+- `description`: opsional, maks 2000.
+- `photo`: opsional, HARUS file gambar, format JPG/JPEG/PNG/WebP, maks 2 MB. Error: "File sampul harus berupa gambar.", "Sampul harus berformat JPG, PNG, atau WebP.", "Ukuran sampul maksimal 2 MB."
+- `available_stock` otomatis = `stock` saat buku baru dibuat.
+- Saat UPDATE: `available_stock` = `stock` - jumlah yang sedang dipinjam. DITOLAK jika `stock` < jumlah yang sedang dipinjam -> error "Stok tidak boleh kurang dari jumlah buku yang sedang dipinjam."
+- Hapus buku DITOLAK jika sedang dipinjam -> error "Buku tidak dapat dihapus karena sedang dipinjam."
+- Fitur index: pencarian (judul/penulis/isbn), filter kategori, filter status stok (tersedia/menipis/habis, menipis = stok 1-5), pagination 10 baris.
+- Status stok: `habis` (available_stock <= 0), `menipis` (<= 5), `tersedia`.
+
+### 6. Modul Peminjaman (Buat Transaksi Pinjam)
+Field: `member_id`, `loan_date`, `loan_days`, `items[][book_id]`, `items[][quantity]`
+- `member_id`: wajib, harus anggota yang valid. Hanya anggota AKTIF yang bisa dipilih (anggota aktif + buku stok tersedia yang ditampilkan di form). Error: "Anggota wajib dipilih."
+- `loan_date`: wajib, tanggal valid. Error: "Tanggal peminjaman wajib diisi."
+- `loan_days`: wajib, integer, minimal 1, maksimal 30. Error: "Lama pinjam wajib diisi."
+- `items`: wajib array minimal 1 buku. Error: "Pilih minimal satu buku."
+- `items.*.quantity`: wajib integer minimal 1.
+- Aturan bisnis (LoanService):
+  - Anggota HARUS berstatus `aktif`, jika tidak -> "Anggota tidak aktif, tidak dapat melakukan peminjaman."
+  - Minimal 1 buku dipilih -> "Pilih minimal satu buku untuk dipinjam."
+  - Quantity harus > 0 -> "Jumlah peminjaman buku 'X' harus lebih dari 0."
+  - Buku dengan `available_stock` 0 tidak boleh dipinjam -> "Buku 'X' tidak tersedia."
+  - Quantity TIDAK BOLEH melebihi `available_stock` -> "Jumlah peminjaman 'X' melebihi stok tersedia (N)."
+  - Default lama pinjam 7 hari. Jatuh tempo (due_date) = loan_date + loan_days.
+  - Setelah peminjaman berhasil, `available_stock` setiap buku dikurangi sesuai quantity.
+  - Sukses -> redirect ke halaman peminjaman dengan pesan "Peminjaman berhasil dibuat. ID Transaksi: #<id>".
+
+### 7. Modul Pengembalian (Proses Kembali + Denda)
+- Index menampilkan transaksi berstatus `dipinjam` atau `terlambat`, support search (nama/kode anggota/judul buku), pagination 10.
+- Proses pengembalian: `return_date` wajib tanggal valid.
+- Denda (LoanService): Denda = jumlah hari terlambat x Rp 1.000 per hari; jika tidak terlambat denda Rp 0.
+- Setelah dikembalikan: `available_stock` setiap buku DITAMBAH kembali sesuai quantity, status jadi `dikembalikan`, `return_date` & `total_fine` tercatat.
+- Jika transaksi sudah dikembalikan -> TOLAK dengan error "Transaksi sudah dikembalikan sebelumnya."
+- Sukses -> pesan "Buku berhasil dikembalikan. Denda: Rp <jumlah>".
+
+### 8. Modul Transaksi (Histori / Filter)
+- Menampilkan semua transaksi peminjaman.
+- Filter: search (nama/kode anggota, judul/isbn buku), filter status (`dipinjam`, `terlambat`, `dikembalikan`), filter tanggal dari (date_from) dan sampai (date_to). Pagination 15 baris.
+- Status yang dipakai sistem: `dipinjam`, `terlambat`, `dikembalikan`.
+
+### 9. Modul Laporan (Ringkasan + Ekspor)
+- Ringkasan: total buku, tersedia, dipinjam; total anggota, aktif, tidak aktif; total transaksi, pengembalian, terlambat, total denda.
+- Filter tanggal dari/sampai (opsional).
+- Tombol ekspor CSV (`laporan-transaksi-<timestamp>.csv`) dan ekspor PDF (`laporan-transaksi-<timestamp>.pdf`) yang isinya mengikuti filter tanggal yang dipilih.
+
+### 10. Modul Profil (Edit Profil & Kata Sandi)
+Field: `name`, `email`, `photo`, `password`
+- `name`: wajib, maks 255.
+- `email`: wajib, format email valid, maks 255, UNIK (tidak termasuk email sendiri). Error sesuai aturan.
+- `photo`: opsional, gambar JPG/JPEG/PNG/WebP, maks 2 MB.
+- `password`: opsional; jika diisi minimal 8 karakter dan harus ada konfirmasi (`confirmed`). Error: "Password minimal 8 karakter.", "Konfirmasi password tidak cocok."
+
+### 11. Modul Katalog (Publik, tanpa login)
+- Listing buku dengan pencarian (judul/penulis/isbn/penerbit), filter kategori, filter "tersedia" (available_stock > 0), pagination 18.
+- Halaman detail buku menampilkan buku + 4 buku terkait (kategori sama).
+
+## TUGAS ANDA
+
+Buatkan **tabel test case blackbox testing** yang lengkap dan siap dipakai untuk menguji seluruh modul di atas, dengan ketentuan berikut:
+
+1. Gunakan teknik blackbox: **Equivalence Partitioning (EP)** dan **Boundary Value Analysis (BVA)**, plus skenario positif & negatif.
+2. Buat test case untuk SETIAP modul di atas (11 modul).
+3. Format tabel harus berupa tabel markdown dengan kolom (tentukan juga format ID sesuai ketentuan file lampiran bila ada):
+   | No | ID Test Case | Modul | Skenario Uji | Kategori (Positif/Negatif/EP/BVA) | Prekondisi | Langkah Pengujian | Data Uji/Input | Hasil yang Diharapkan | Prioritas (Tinggi/Sedang/Rendah) |
+4. Sertakan test case untuk: input kosong, input dengan karakter maksimum(maks & maks+1), minimal(min & min-1), input duplikat (trigger unique), format salah (email/telepon/gambar/bulan/tahun), jenis file tidak sesuai (teks/bukan gambar), file melebihi batas ukuran, data tidak ditemukan saat pencarian, akses tanpa login (redirect ke login), akses halaman yang tidak berhak, penghapusan data yang masih direferensikan (buku dipinjam, kategori berisi buku), stok melebihi ketersediaan, pengembalian yang sudah dikembalikan, denda terlambat 1 hari/tepat jatuh tempo/lebih 1 hari.
+5. Gunakan format tanggal yang konsisten, misal `dd-mm-yyyy`.
+6. Untuk test data, buatkan data contoh yang REALISTIS dan konsisten antar test case (misal gunakan anggota & buku yang sama bila saling terkait).
+7. Keluarkan juga ringkasan per modul: jumlah test case, jumlah positif/negatif, dan total keseluruhan.
+
+IKUTI JUGA ketentuan khusus dari file lampiran (di bawah ini) jika ada — misalnya format ID test case, jumlah kasus per modul, prioritas, template kolom, atau tabel yang berbeda. Jika ada konflik antara ketentuan di atas dan file lampiran, PATUHI file lampiran tersebut.
+
+## FILE LAMPIRAN KETENTUAN PENGGUNA
+
+[SALIN TEMPEL KETENTUAN ANDA DI SINI — misalnya saat ini kosong, abaikan bagian ini]
+
+[SALIN TEMPEL ISI FILE KETENTUAN DI SINI]
+
+---SALIN SAMPAI SINI---
